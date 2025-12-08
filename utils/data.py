@@ -43,9 +43,9 @@ class RK4DataGenerator:
         )
 
 
-    def generate(self, nop=100, noise_std=0.0):
-        comparts = self.sir_sol.sol(np.linspace(self.t_0, self.t_f, nop)).T
-        comparts += np.random.normal(scale=noise_std, size=(nop, 3))
+    def generate(self, t, noise_std=0.0):
+        comparts = self.sir_sol.sol(t).T
+        comparts += np.random.normal(scale=noise_std, size=(len(t), 3))
         comparts[comparts < 0] = 0
         comparts[comparts > 1] = 1
         return comparts

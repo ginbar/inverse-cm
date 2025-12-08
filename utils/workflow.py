@@ -17,50 +17,50 @@ from deepxde.icbc import PointSetBC
 from deepxde.nn import FNN, PFNN
 from deepxde.model import Model
 from deepxde.callbacks import VariableValue, EarlyStopping
-from deepxde.metrics import mean_squared_error
-from scipy.integrate import solve_ivp
-from matplotlib import pyplot as plt
+import deepxde.backend as bkd 
 
 from tensorflow.keras.optimizers.schedules import InverseTimeDecay
 from .custom_models import AdaptativeDataWeightModel
 
 
+
 class WorkflowModel:
 
-    def __init__(self, t_0, t_f, I_data, data_t, N, gamma):
+    def __init__(self, t_0, t_f, I_data, data_t, N=1, gamma=0.1, scaling="z"):
         self.t_0 = t_0 
         self.t_f = t_f
         self.I_data = I_data
         self.data_t = data_t.reshape(-1, 1)
         self.N = N
         self.gamma = gamma
-        self.n_equations = 4
-        self.n_out = 4
-        self.n_compartments = 3
+        self.n_equations = 2
+        self.n_compartments = 2
+        self.n_out = self.n_compartments + 1
+        self.scaling = scaling
         self.scale_data()
         self.config_model()
 
 
-
     def scale_data(self):
 
-        I_min = self.I_data.min(axis=0) 
-        I_max = self.I_data.max(axis=0)
-        I_mean = self.I_data.mean(axis=0)
-        I_std = self.I_data.std(axis=0)
-        
-        # Normalization
-        def scale(data): return data / self.N
-        def unscale(data): return data * self.N
-
-        # z scaling
-        # def scale(data): return (data - I_mean) / I_std
-        # def unscale(data): return data * I_std + I_mean
-        
-        # Min/Max
-        def scale(data): return (data - I_min) / (I_max - I_min)
-        def unscale(data): return I_min + (I_max - I_min) * data
-
+        match self.scaling:
+            case  "z":
+                I_mean = self.I_data.mean(axis=0)
+                I_std = self.I_data.std(axis=0)
+                def scale(data): return (data - I_mean) / I_std
+                def unscale(data): return data * I_std + I_mean
+            case "min/max":
+                I_min = self.I_data.min(axis=0) 
+                I_max = self.I_data.max(axis=0)
+                def scale(data): return (data - I_min) / (I_max - I_min)
+                def unscale(data): return I_min + (I_max - I_min) * data
+            case "norm":
+                def scale(data): return data / self.N
+                def unscale(data): return data * self.N
+            case _:
+                def scale(data): return data
+                def unscale(data): return data
+                
         self.scale = scale
         self.unscale = unscale
 
@@ -82,7 +82,7 @@ class WorkflowModel:
         return [
             IC(self.timeinterval, S0_val, is_on_initial, component=0),
             IC(self.timeinterval, I0_val, is_on_initial, component=1),
-            IC(self.timeinterval, R0_val, is_on_initial, component=2)
+            # IC(self.timeinterval, R0_val, is_on_initial, component=2)
         ]
 
 
@@ -96,17 +96,17 @@ class WorkflowModel:
         self.timeinterval = TimeDomain(self.t_0, self.t_f)
 
         def sir_residual(t, y):
-            S, I, R, beta = y[:,0], y[:,1], y[:,2], y[:,3]
+            S, I, beta = y[:,0], y[:,1], y[:,2]#, y[:,3]
 
             dS_dt = dde.gradients.jacobian(y, t, i=0)
             dI_dt = dde.gradients.jacobian(y, t, i=1)
-            dR_dt = dde.gradients.jacobian(y, t, i=2)
+            # dR_dt = dde.gradients.jacobian(y, t, i=2)
             
             return [
                 dS_dt - (-beta * S * I / self.scaled_N),
                 dI_dt - (beta * S * I  / self.scaled_N - self.gamma * I),
-                dR_dt - (self.gamma * I),
-                S + I + R - self.scaled_N
+                # dR_dt - (self.gamma * I),
+                # S + I + R - self.scaled_N
             ]
 
         ics = self.create_ics()
@@ -116,37 +116,35 @@ class WorkflowModel:
             self.timeinterval, 
             sir_residual, 
             ics + dcs,
-            num_domain=len(self.data_t)*2,
+            num_domain=128,
             num_boundary=2,
-            num_test=len(self.data_t)//2,
+            num_test=32,
             anchors=self.data_t
         )
 
-        n_hidden_layers = 8
-        hidden_layer_size = 20 
+        n_hidden_layers = 4
+        hidden_layer_size = 50
         topology = [1] + [hidden_layer_size] * n_hidden_layers + [self.n_out]
 
-        net = FNN(
+        net = PFNN(
             topology, 
             "tanh", 
-            "Glorot uniform",
-            regularization=["L2", 1e-5],
-            dropout_rate=0.001
+            "Glorot normal",
+            # dropout_rate=0.001
         )
 
         self.model = Model(data, net)
         # self.model = AdaptativeDataWeightModel(
         #     data, net, n_physics=self.n_equations + len(ics), n_data=1)
 
-        eq_w, ic_w, data_w = 1, 1, 1
+        eq_w, ic_w, data_w = 10, 10, 1
         loss_weights = [eq_w] * self.n_equations + [ic_w] * len(ics) + [data_w] * len(dcs)
 
         self.model.compile("adam", 0.002, loss_weights=loss_weights)
-        # self.model.compile("L-BFGS", 0.002, loss_weights=loss_weights)
 
 
     def train(self):
-        early_stopping = EarlyStopping(min_delta=1e-7, patience=5000)
+        early_stopping = EarlyStopping(min_delta=1e-10, patience=10000)
 
         losshistory, train_state = self.model.train(
             iterations=100000, 
