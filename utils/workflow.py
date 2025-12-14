@@ -17,7 +17,7 @@ from deepxde.icbc import PointSetBC
 from deepxde.nn import FNN, PFNN
 from deepxde.model import Model
 from deepxde.callbacks import VariableValue, EarlyStopping
-import deepxde.backend as bkd 
+import deepxde.backend as bkd
 
 from tensorflow.keras.optimizers.schedules import InverseTimeDecay
 from .custom_models import AdaptativeDataWeightModel
@@ -27,7 +27,7 @@ from .custom_models import AdaptativeDataWeightModel
 class WorkflowModel:
 
     def __init__(self, t_0, t_f, I_data, data_t, N=1, gamma=0.1, scaling="z"):
-        self.t_0 = t_0 
+        self.t_0 = t_0
         self.t_f = t_f
         self.I_data = I_data
         self.data_t = data_t.reshape(-1, 1)
@@ -50,7 +50,7 @@ class WorkflowModel:
                 def scale(data): return (data - I_mean) / I_std
                 def unscale(data): return data * I_std + I_mean
             case "min/max":
-                I_min = self.I_data.min(axis=0) 
+                I_min = self.I_data.min(axis=0)
                 I_max = self.I_data.max(axis=0)
                 def scale(data): return (data - I_min) / (I_max - I_min)
                 def unscale(data): return I_min + (I_max - I_min) * data
@@ -60,12 +60,12 @@ class WorkflowModel:
             case _:
                 def scale(data): return data
                 def unscale(data): return data
-                
+
         self.scale = scale
         self.unscale = unscale
 
         self.scaled_I_data = scale(self.I_data)
-        
+
 
     def create_ics(self):
         self.I0 = self.scaled_I_data[0]
@@ -87,79 +87,101 @@ class WorkflowModel:
 
 
     def create_data_bcs(self):
-        data_I = PointSetBC(self.data_t, self.scaled_I_data, component=1)
+        data_I = PointSetBC(self.data_t, self.scaled_I_data.reshape(-1, 1), component=1)
         return [data_I]
 
 
     def config_model(self):
-        
+
         self.timeinterval = TimeDomain(self.t_0, self.t_f)
 
         def sir_residual(t, y):
-            S, I, beta = y[:,0], y[:,1], y[:,2]#, y[:,3]
+            S, I, beta = y[:,0:1], y[:,1:2], y[:,2:3]
 
             dS_dt = dde.gradients.jacobian(y, t, i=0)
             dI_dt = dde.gradients.jacobian(y, t, i=1)
-            # dR_dt = dde.gradients.jacobian(y, t, i=2)
-            
+
             return [
-                dS_dt - (-beta * S * I / self.scaled_N),
-                dI_dt - (beta * S * I  / self.scaled_N - self.gamma * I),
-                # dR_dt - (self.gamma * I),
-                # S + I + R - self.scaled_N
+                dS_dt + beta * S * I / self.scaled_N,
+                dI_dt - beta * S * I / self.scaled_N + self.gamma * I,
             ]
+
+            # S, I, R, beta = y[:,0:1], y[:,1:2], y[:,2:3], y[:,3:4]
+
+            # dS_dt = dde.gradients.jacobian(y, t, i=0)
+            # dI_dt = dde.gradients.jacobian(y, t, i=1)
+            # dR_dt = dde.gradients.jacobian(y, t, i=2)
+
+            # return [
+            #     dS_dt + beta * S * I / self.scaled_N,
+            #     dI_dt - beta * S * I / self.scaled_N + self.gamma * I,
+            #     dR_dt - self.gamma * I,
+            #     self.scaled_N - (S + I + R) 
+            # ]
 
         ics = self.create_ics()
         dcs = self.create_data_bcs()
 
+        print(ics + dcs)
+
         data = PDE(
-            self.timeinterval, 
-            sir_residual, 
+            self.timeinterval,
+            sir_residual,
             ics + dcs,
-            num_domain=128,
+            num_domain=len(self.data_t)*2,
             num_boundary=2,
-            num_test=32,
+            num_test=len(self.data_t)//2,
             anchors=self.data_t
         )
 
-        n_hidden_layers = 4
-        hidden_layer_size = 50
+        n_hidden_layers = 3
+        hidden_layer_size = 80
         topology = [1] + [hidden_layer_size] * n_hidden_layers + [self.n_out]
 
         net = PFNN(
-            topology, 
-            "tanh", 
-            "Glorot normal",
-            # dropout_rate=0.001
+            topology,
+            # "ReLU",
+            # "He uniform"
+            "tanh",
+            "Glorot uniform",
+            # # dropout_rate=0.001
         )
 
         self.model = Model(data, net)
         # self.model = AdaptativeDataWeightModel(
         #     data, net, n_physics=self.n_equations + len(ics), n_data=1)
 
-        eq_w, ic_w, data_w = 10, 10, 1
+        eq_w, ic_w, data_w = 1, 1, 1
         loss_weights = [eq_w] * self.n_equations + [ic_w] * len(ics) + [data_w] * len(dcs)
 
         self.model.compile("adam", 0.002, loss_weights=loss_weights)
+        # self.model.compile("L-BFGS", 0.002, loss_weights=loss_weights)
 
 
     def train(self):
-        early_stopping = EarlyStopping(min_delta=1e-10, patience=10000)
+        early_stopping = EarlyStopping(min_delta=1e-13, patience=15000)
 
         losshistory, train_state = self.model.train(
-            iterations=100000, 
+            iterations=300000,
             display_every=100,
-            callbacks=[early_stopping]
+            # callbacks=[early_stopping]
         )
 
         self.losshistory = losshistory
         self.train_state = train_state
 
         return losshistory, train_state
-        
+
 
     def predict(self, t):
         pred = self.model.predict(t.reshape(-1, 1))
-        comparts = self.unscale(pred[:,0:self.n_compartments])
-        return np.vstack((comparts.T, pred[:,self.n_compartments])).T
-         
+        return self.unscale(pred)
+        # comparts = self.unscale(pred[:,0:self.n_compartments])
+        # return np.vstack((comparts.T, pred[:,self.n_compartments])).T
+
+
+    @property
+    def data_weight_hist(self):
+        if isinstance(self.model, AdaptativeDataWeightModel): 
+            return self.model.data_weight_hist
+        return None
