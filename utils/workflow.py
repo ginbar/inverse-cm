@@ -26,7 +26,23 @@ from .custom_models import AdaptativeDataWeightModel
 
 class WorkflowModel:
 
-    def __init__(self, t_0, t_f, I_data, data_t, N=1, gamma=0.1, scaling="z"):
+    def __init__(
+        self, 
+        t_0, 
+        t_f, 
+        I_data, 
+        data_t, 
+        N=1, 
+        gamma=0.1, 
+        n_hidden_layers=3,
+        hidden_layer_size=80,
+        activation="tanh",
+        learning_rate=0.002,
+        scaling="z", 
+        adaptative_wdata=False,
+        early_stopping=True,
+        fine_tunning_using_lbfgs=False
+    ):
         self.t_0 = t_0
         self.t_f = t_f
         self.I_data = I_data
@@ -36,7 +52,14 @@ class WorkflowModel:
         self.n_equations = 2
         self.n_compartments = 2
         self.n_out = self.n_compartments + 1
+        self.n_hidden_layers = n_hidden_layers
+        self.hidden_layer_size = hidden_layer_size
+        self.activation = activation
+        self.learning_rate = learning_rate
         self.scaling = scaling
+        self.adaptative_wdata = adaptative_wdata
+        self.early_stopping = early_stopping
+        self.fine_tunning_using_lbfgs = fine_tunning_using_lbfgs
         self.scale_data()
         self.config_model()
 
@@ -134,38 +157,48 @@ class WorkflowModel:
             anchors=self.data_t
         )
 
-        n_hidden_layers = 3
-        hidden_layer_size = 80
-        topology = [1] + [hidden_layer_size] * n_hidden_layers + [self.n_out]
+        topology = [1] + [self.hidden_layer_size] * self.n_hidden_layers + [self.n_out]
+
+        initialization = "Glorot uniform" if self.activation == "tanh" else "He uniform"
 
         net = PFNN(
             topology,
-            # "ReLU",
-            # "He uniform"
-            "tanh",
-            "Glorot uniform",
-            # # dropout_rate=0.001
+            self.activation,
+            initialization
         )
 
-        self.model = Model(data, net)
-        # self.model = AdaptativeDataWeightModel(
-        #     data, net, n_physics=self.n_equations + len(ics), n_data=1)
+        if self.adaptative_wdata:
+            self.model = AdaptativeDataWeightModel(
+                data, net, n_physics=self.n_equations + len(ics), n_data=1)
+        else:
+            self.model = Model(data, net)
 
         eq_w, ic_w, data_w = 1, 1, 1
         loss_weights = [eq_w] * self.n_equations + [ic_w] * len(ics) + [data_w] * len(dcs)
 
-        self.model.compile("adam", 0.002, loss_weights=loss_weights)
-        # self.model.compile("L-BFGS", 0.002, loss_weights=loss_weights)
+        self.model.compile("adam", self.learning_rate, loss_weights=loss_weights)
 
 
     def train(self):
-        early_stopping = EarlyStopping(min_delta=1e-13, patience=15000)
+        
+        callbacks = []
+
+        if self.early_stopping:
+            callbacks.append(EarlyStopping(min_delta=1e-13, patience=15000))
 
         losshistory, train_state = self.model.train(
             iterations=300000,
             display_every=100,
-            # callbacks=[early_stopping]
+            callbacks=callbacks
         )
+
+        if self.fine_tunning_using_lbfgs:
+            self.model.compile("L-BGFS")
+            losshistory, train_state =  self.model.train(
+                iterations=50000,
+                display_every=100,
+                callbacks=callbacks
+            )
 
         self.losshistory = losshistory
         self.train_state = train_state
@@ -175,9 +208,9 @@ class WorkflowModel:
 
     def predict(self, t):
         pred = self.model.predict(t.reshape(-1, 1))
-        return self.unscale(pred)
-        # comparts = self.unscale(pred[:,0:self.n_compartments])
-        # return np.vstack((comparts.T, pred[:,self.n_compartments])).T
+        # return self.unscale(pred)
+        comparts = self.unscale(pred[:,0:self.n_compartments])
+        return np.vstack((comparts.T, pred[:,self.n_compartments])).T
 
 
     @property
