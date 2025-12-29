@@ -5,6 +5,7 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import deepxde as dde
 import numpy as np
+import tensorflow as tf
 
 dde.config.set_default_float("float64")
 dde.config.set_random_seed(42)
@@ -21,6 +22,7 @@ import deepxde.backend as bkd
 
 from tensorflow.keras.optimizers.schedules import InverseTimeDecay
 from .custom_models import AdaptativeDataWeightModel
+from .data import transform_column_with_mask
 
 
 
@@ -38,10 +40,13 @@ class WorkflowModel:
         hidden_layer_size=80,
         activation="tanh",
         learning_rate=0.002,
-        scaling="z", 
+        scaling="z",
+        adam_iterations=300000,
+        lbfgs_iterations=50000, 
         adaptative_wdata=False,
         early_stopping=True,
-        fine_tunning_using_lbfgs=False
+        fine_tunning_using_lbfgs=False,
+        beta_hard_constraints=False
     ):
         self.t_0 = t_0
         self.t_f = t_f
@@ -56,10 +61,13 @@ class WorkflowModel:
         self.hidden_layer_size = hidden_layer_size
         self.activation = activation
         self.learning_rate = learning_rate
+        self.adam_iterations = adam_iterations
+        self.lbfgs_iterations = lbfgs_iterations
         self.scaling = scaling
         self.adaptative_wdata = adaptative_wdata
         self.early_stopping = early_stopping
         self.fine_tunning_using_lbfgs = fine_tunning_using_lbfgs
+        self.beta_hard_constraints = beta_hard_constraints
         self.scale_data()
         self.config_model()
 
@@ -94,18 +102,18 @@ class WorkflowModel:
         self.I0 = self.scaled_I_data[0]
         self.scaled_N = self.scale(self.N)
         self.S0 = self.scaled_N - self.I0
-        self.R0 = self.scale(0.0)
+        self.beta0 = 0.25
 
         # Tensorflow has an issue with lambdas...
         def is_on_initial(_, on_initial): return on_initial
         def S0_val(_): return self.S0
         def I0_val(_): return self.I0
-        def R0_val(_): return self.R0
+        def beta_val(_): return self.beta0
 
         return [
             IC(self.timeinterval, S0_val, is_on_initial, component=0),
             IC(self.timeinterval, I0_val, is_on_initial, component=1),
-            # IC(self.timeinterval, R0_val, is_on_initial, component=2)
+            # IC(self.timeinterval, beta_val, is_on_initial, component=2),
         ]
 
 
@@ -129,23 +137,8 @@ class WorkflowModel:
                 dI_dt - beta * S * I / self.scaled_N + self.gamma * I,
             ]
 
-            # S, I, R, beta = y[:,0:1], y[:,1:2], y[:,2:3], y[:,3:4]
-
-            # dS_dt = dde.gradients.jacobian(y, t, i=0)
-            # dI_dt = dde.gradients.jacobian(y, t, i=1)
-            # dR_dt = dde.gradients.jacobian(y, t, i=2)
-
-            # return [
-            #     dS_dt + beta * S * I / self.scaled_N,
-            #     dI_dt - beta * S * I / self.scaled_N + self.gamma * I,
-            #     dR_dt - self.gamma * I,
-            #     self.scaled_N - (S + I + R) 
-            # ]
-
         ics = self.create_ics()
         dcs = self.create_data_bcs()
-
-        print(ics + dcs)
 
         data = PDE(
             self.timeinterval,
@@ -167,6 +160,11 @@ class WorkflowModel:
             initialization
         )
 
+        if self.beta_hard_constraints:
+            def non_negative(x, y):
+                return transform_column_with_mask(y, 2, tf.nn.relu)
+            net.apply_output_transform(non_negative)
+
         if self.adaptative_wdata:
             self.model = AdaptativeDataWeightModel(
                 data, net, n_physics=self.n_equations + len(ics), n_data=1)
@@ -179,7 +177,7 @@ class WorkflowModel:
         self.model.compile("adam", self.learning_rate, loss_weights=loss_weights)
 
 
-    def train(self):
+    def train(self, verbose=0):
         
         callbacks = []
 
@@ -187,15 +185,16 @@ class WorkflowModel:
             callbacks.append(EarlyStopping(min_delta=1e-13, patience=15000))
 
         losshistory, train_state = self.model.train(
-            iterations=300000,
+            iterations=self.adam_iterations,
             display_every=100,
-            callbacks=callbacks
+            callbacks=callbacks,
+            verbose=verbose
         )
 
         if self.fine_tunning_using_lbfgs:
             self.model.compile("L-BGFS")
             losshistory, train_state =  self.model.train(
-                iterations=50000,
+                iterations=self.lbfgs_iterations,
                 display_every=100,
                 callbacks=callbacks
             )
@@ -208,7 +207,6 @@ class WorkflowModel:
 
     def predict(self, t):
         pred = self.model.predict(t.reshape(-1, 1))
-        # return self.unscale(pred)
         comparts = self.unscale(pred[:,0:self.n_compartments])
         return np.vstack((comparts.T, pred[:,self.n_compartments])).T
 
