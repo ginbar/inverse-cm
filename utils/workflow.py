@@ -6,6 +6,7 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import deepxde as dde
 import numpy as np
 import tensorflow as tf
+import time
 
 dde.config.set_default_float("float64")
 dde.config.set_random_seed(42)
@@ -41,12 +42,15 @@ class WorkflowModel:
         activation="tanh",
         learning_rate=0.002,
         scaling="z",
+        w_physics=1,
+        w_data=1,
         adam_iterations=300000,
         lbfgs_iterations=50000, 
         adaptative_wdata=False,
         early_stopping=True,
         fine_tunning_using_lbfgs=False,
-        beta_hard_constraints=False
+        beta_hard_constraints=False,
+        l2_regularization=False
     ):
         self.t_0 = t_0
         self.t_f = t_f
@@ -64,10 +68,13 @@ class WorkflowModel:
         self.adam_iterations = adam_iterations
         self.lbfgs_iterations = lbfgs_iterations
         self.scaling = scaling
+        self.w_physics = w_physics
+        self.w_data = w_data
         self.adaptative_wdata = adaptative_wdata
         self.early_stopping = early_stopping
         self.fine_tunning_using_lbfgs = fine_tunning_using_lbfgs
         self.beta_hard_constraints = beta_hard_constraints
+        self.l2_regularization = l2_regularization
         self.scale_data()
         self.config_model()
 
@@ -171,8 +178,11 @@ class WorkflowModel:
         else:
             self.model = Model(data, net)
 
-        eq_w, ic_w, data_w = 1, 1, 1
+        eq_w, ic_w, data_w = self.w_physics, self.w_physics, self.w_data
         loss_weights = [eq_w] * self.n_equations + [ic_w] * len(ics) + [data_w] * len(dcs)
+
+        if self.l2_regularization:
+            loss_weights += [1]
 
         self.model.compile("adam", self.learning_rate, loss_weights=loss_weights)
 
@@ -183,6 +193,8 @@ class WorkflowModel:
 
         if self.early_stopping:
             callbacks.append(EarlyStopping(min_delta=1e-13, patience=15000))
+
+        initial_t = time.perf_counter() 
 
         losshistory, train_state = self.model.train(
             iterations=self.adam_iterations,
@@ -198,6 +210,8 @@ class WorkflowModel:
                 display_every=100,
                 callbacks=callbacks
             )
+
+        self.total_training_time = time.perf_counter() - initial_t
 
         self.losshistory = losshistory
         self.train_state = train_state
@@ -216,3 +230,8 @@ class WorkflowModel:
         if isinstance(self.model, AdaptativeDataWeightModel): 
             return self.model.data_weight_hist
         return None
+
+
+    @property
+    def formated_total_training_time(self):
+        return time.strftime('%H:%M:%S', time.gmtime(self.total_training_time))
