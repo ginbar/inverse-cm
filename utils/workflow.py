@@ -41,11 +41,12 @@ class WorkflowModel:
         hidden_layer_size=80,
         activation="tanh",
         learning_rate=0.002,
-        scaling="z",
+        scaling="norm",
         w_physics=1,
         w_data=1,
         adam_iterations=300000,
-        lbfgs_iterations=50000, 
+        lbfgs_iterations=50000,
+        display_every=100, 
         adaptative_wdata=False,
         early_stopping=True,
         fine_tunning_using_lbfgs=False,
@@ -67,6 +68,7 @@ class WorkflowModel:
         self.learning_rate = learning_rate
         self.adam_iterations = adam_iterations
         self.lbfgs_iterations = lbfgs_iterations
+        self.display_every = display_every
         self.scaling = scaling
         self.w_physics = w_physics
         self.w_data = w_data
@@ -109,7 +111,7 @@ class WorkflowModel:
         self.I0 = self.scaled_I_data[0]
         self.scaled_N = self.scale(self.N)
         self.S0 = self.scaled_N - self.I0
-        self.beta0 = 0.25
+        self.beta0 = 0.2
 
         # Tensorflow has an issue with lambdas...
         def is_on_initial(_, on_initial): return on_initial
@@ -120,7 +122,7 @@ class WorkflowModel:
         return [
             IC(self.timeinterval, S0_val, is_on_initial, component=0),
             IC(self.timeinterval, I0_val, is_on_initial, component=1),
-            # IC(self.timeinterval, beta_val, is_on_initial, component=2),
+            IC(self.timeinterval, beta_val, is_on_initial, component=2),
         ]
 
 
@@ -192,23 +194,24 @@ class WorkflowModel:
         callbacks = []
 
         if self.early_stopping:
-            callbacks.append(EarlyStopping(min_delta=1e-13, patience=15000))
+            callbacks.append(EarlyStopping(min_delta=1e-10, patience=20000))
 
         initial_t = time.perf_counter() 
 
         losshistory, train_state = self.model.train(
             iterations=self.adam_iterations,
-            display_every=100,
+            display_every=self.display_every,
             callbacks=callbacks,
             verbose=verbose
         )
 
         if self.fine_tunning_using_lbfgs:
-            self.model.compile("L-BGFS")
+            self.model.compile("L-BFGS", self.learning_rate)
             losshistory, train_state =  self.model.train(
                 iterations=self.lbfgs_iterations,
-                display_every=100,
-                callbacks=callbacks
+                display_every=self.display_every,
+                callbacks=callbacks,
+                verbose=verbose
             )
 
         self.total_training_time = time.perf_counter() - initial_t

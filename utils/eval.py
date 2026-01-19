@@ -9,7 +9,7 @@ def eval_predictions(real, pred, compartiments=["S", "I", "beta"]):
 
     return pd.DataFrame({
         "compartiment": compartiments, 
-        "MSE": [mean_squared_error(real[:,i], pred[:,i]) for i in indexes],
+        "RMSE": [np.sqrt(mean_squared_error(real[:,i], pred[:,i])) for i in indexes],
         "L2": [l2_relative_error(real[:,i], pred[:,i]) for i in indexes],
         "L-infinity": [np.max(np.abs(real[:,i] - pred[:,i])) for i in indexes]
     })
