@@ -19,11 +19,11 @@ from deepxde.icbc import PointSetBC
 from deepxde.nn import FNN, PFNN
 from deepxde.model import Model
 from deepxde.callbacks import VariableValue, EarlyStopping
-import deepxde.backend as bkd
+from deepxde import backend as bkd
 
 from tensorflow.keras.optimizers.schedules import InverseTimeDecay
 from .custom_models import AdaptativeDataWeightModel
-from .data import transform_column_with_mask
+from .data import transform_column_with_mask, estimate_beta0
 
 
 
@@ -36,19 +36,25 @@ class WorkflowModel:
         I_data, 
         data_t, 
         N=1, 
-        gamma=0.1, 
+        gamma=0.1,
+        beta_estimation_window=10, 
         n_hidden_layers=3,
         hidden_layer_size=80,
         activation="tanh",
-        learning_rate=0.002,
+        init_distribution="uniform",
+        learning_rate=0.001,
         scaling="norm",
         w_physics=1,
         w_data=1,
         adam_iterations=300000,
         lbfgs_iterations=50000,
-        display_every=100, 
+        display_every=100,
+        es_min_delta=1e-6,
+        es_patience=50000,
+        parallel_pinns=False, 
         adaptative_wdata=False,
-        early_stopping=True,
+        early_stopping=False,
+        estimate_beta=False,
         fine_tunning_using_lbfgs=False,
         beta_hard_constraints=False,
         l2_regularization=False
@@ -59,12 +65,14 @@ class WorkflowModel:
         self.data_t = data_t.reshape(-1, 1)
         self.N = N
         self.gamma = gamma
+        self.beta_estimation_window = beta_estimation_window
         self.n_equations = 2
         self.n_compartments = 2
         self.n_out = self.n_compartments + 1
         self.n_hidden_layers = n_hidden_layers
         self.hidden_layer_size = hidden_layer_size
         self.activation = activation
+        self.init_distribution = init_distribution
         self.learning_rate = learning_rate
         self.adam_iterations = adam_iterations
         self.lbfgs_iterations = lbfgs_iterations
@@ -72,8 +80,12 @@ class WorkflowModel:
         self.scaling = scaling
         self.w_physics = w_physics
         self.w_data = w_data
+        self.es_min_delta = es_min_delta
+        self.es_patience = es_patience
+        self.parallel_pinns = parallel_pinns
         self.adaptative_wdata = adaptative_wdata
         self.early_stopping = early_stopping
+        self.estimate_beta = estimate_beta
         self.fine_tunning_using_lbfgs = fine_tunning_using_lbfgs
         self.beta_hard_constraints = beta_hard_constraints
         self.l2_regularization = l2_regularization
@@ -82,9 +94,8 @@ class WorkflowModel:
 
 
     def scale_data(self):
-
         match self.scaling:
-            case  "z":
+            case "z":
                 I_mean = self.I_data.mean(axis=0)
                 I_std = self.I_data.std(axis=0)
                 def scale(data): return (data - I_mean) / I_std
@@ -111,19 +122,28 @@ class WorkflowModel:
         self.I0 = self.scaled_I_data[0]
         self.scaled_N = self.scale(self.N)
         self.S0 = self.scaled_N - self.I0
-        self.beta0 = 0.2
+        self.beta0 = None
 
         # Tensorflow has an issue with lambdas...
         def is_on_initial(_, on_initial): return on_initial
         def S0_val(_): return self.S0
         def I0_val(_): return self.I0
-        def beta_val(_): return self.beta0
 
-        return [
+        ics = [
             IC(self.timeinterval, S0_val, is_on_initial, component=0),
             IC(self.timeinterval, I0_val, is_on_initial, component=1),
-            IC(self.timeinterval, beta_val, is_on_initial, component=2),
         ]
+
+        if self.estimate_beta:
+            self.beta0 = estimate_beta0(
+                self.I_data, 
+                self.gamma, 
+                window=self.beta_estimation_window
+            )
+            def beta_val(_): return self.beta0
+            ics.append(IC(self.timeinterval, beta_val, is_on_initial, component=2))
+
+        return ics
 
 
     def create_data_bcs(self):
@@ -132,28 +152,33 @@ class WorkflowModel:
 
 
     def config_model(self):
-
         self.timeinterval = TimeDomain(self.t_0, self.t_f)
-
+        
         def sir_residual(t, y):
             S, I, beta = y[:,0:1], y[:,1:2], y[:,2:3]
 
             dS_dt = dde.gradients.jacobian(y, t, i=0)
             dI_dt = dde.gradients.jacobian(y, t, i=1)
 
+            # dbeta_dt = dde.gradients.jacobian(y, t, i=2)
+            # beta_smoothness = bkd.mean(bkd.abs(dbeta_dt), dim=1)
+            # beta_smoothness = tf.reduce_mean(tf.abs(dbeta_dt))
+            # beta_smoothness = dbeta_dt
+
             return [
                 dS_dt + beta * S * I / self.scaled_N,
                 dI_dt - beta * S * I / self.scaled_N + self.gamma * I,
+                # beta_smoothness
             ]
 
-        ics = self.create_ics()
-        dcs = self.create_data_bcs()
+        self.ics = self.create_ics()
+        self.dcs = self.create_data_bcs()
 
         data = PDE(
             self.timeinterval,
             sir_residual,
-            ics + dcs,
-            num_domain=len(self.data_t)*2,
+            self.ics + self.dcs,
+            num_domain=len(self.data_t),
             num_boundary=2,
             num_test=len(self.data_t)//2,
             anchors=self.data_t
@@ -161,9 +186,15 @@ class WorkflowModel:
 
         topology = [1] + [self.hidden_layer_size] * self.n_hidden_layers + [self.n_out]
 
-        initialization = "Glorot uniform" if self.activation == "tanh" else "He uniform"
+        initialization = self.get_initialization()
 
-        net = PFNN(
+        net_model = FNN
+
+        if self.parallel_pinns:
+            net_model = PFNN
+            topology *= self.n_out
+
+        net = net_model(
             topology,
             self.activation,
             initialization
@@ -176,12 +207,12 @@ class WorkflowModel:
 
         if self.adaptative_wdata:
             self.model = AdaptativeDataWeightModel(
-                data, net, n_physics=self.n_equations + len(ics), n_data=1)
+                data, net, n_physics=self.n_physics, n_data=1)
         else:
             self.model = Model(data, net)
 
         eq_w, ic_w, data_w = self.w_physics, self.w_physics, self.w_data
-        loss_weights = [eq_w] * self.n_equations + [ic_w] * len(ics) + [data_w] * len(dcs)
+        loss_weights = [eq_w] * self.n_equations + [ic_w] * len(self.ics) + [data_w] * len(self.dcs)
 
         if self.l2_regularization:
             loss_weights += [1]
@@ -190,11 +221,11 @@ class WorkflowModel:
 
 
     def train(self, verbose=0):
-        
         callbacks = []
 
         if self.early_stopping:
-            callbacks.append(EarlyStopping(min_delta=1e-10, patience=20000))
+            callbacks.append(EarlyStopping(
+                min_delta=self.es_min_delta, patience=self.es_patience))
 
         initial_t = time.perf_counter() 
 
@@ -238,3 +269,16 @@ class WorkflowModel:
     @property
     def formated_total_training_time(self):
         return time.strftime('%H:%M:%S', time.gmtime(self.total_training_time))
+
+
+    @property
+    def n_physics(self):
+        return self.n_equations + len(self.ics)
+
+
+    def get_initialization(self):
+        match self.activation:
+            case "tanh": return f"Glorot {self.init_distribution}"
+            case "ReLU": return f"He {self.init_distribution}"
+            case _ : raise Exception(f"{self.activation} is not supported.")
+
