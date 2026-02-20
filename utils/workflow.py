@@ -23,7 +23,7 @@ from deepxde import backend as bkd
 
 from tensorflow.keras.optimizers.schedules import InverseTimeDecay
 from .custom_models import AdaptativeDataWeightModel
-from .data import transform_column_with_mask, estimate_beta0
+from .data import transform_column_with_mask, estimate_beta0, estimate_beta0_isaac3
 
 
 
@@ -46,6 +46,7 @@ class WorkflowModel:
         scaling="norm",
         w_physics=1,
         w_data=1,
+        w_beta_smoothness=1e-3,
         adam_iterations=300000,
         lbfgs_iterations=50000,
         display_every=100,
@@ -80,6 +81,7 @@ class WorkflowModel:
         self.scaling = scaling
         self.w_physics = w_physics
         self.w_data = w_data
+        self.w_beta_smoothness = w_beta_smoothness
         self.es_min_delta = es_min_delta
         self.es_patience = es_patience
         self.parallel_pinns = parallel_pinns
@@ -140,6 +142,12 @@ class WorkflowModel:
                 self.gamma, 
                 window=self.beta_estimation_window
             )
+            # self.beta0 = estimate_beta0_isaac3(
+            #     self.I_data,
+            #     self.N,
+            #     self.gamma, 
+            #     deltat=self.beta_estimation_window
+            # )
             def beta_val(_): return self.beta0
             ics.append(IC(self.timeinterval, beta_val, is_on_initial, component=2))
 
@@ -159,16 +167,12 @@ class WorkflowModel:
 
             dS_dt = dde.gradients.jacobian(y, t, i=0)
             dI_dt = dde.gradients.jacobian(y, t, i=1)
-
-            # dbeta_dt = dde.gradients.jacobian(y, t, i=2)
-            # beta_smoothness = bkd.mean(bkd.abs(dbeta_dt), dim=1)
-            # beta_smoothness = tf.reduce_mean(tf.abs(dbeta_dt))
-            # beta_smoothness = dbeta_dt
+            dbeta_dt = dde.gradients.jacobian(y, t, i=2)
 
             return [
                 dS_dt + beta * S * I / self.scaled_N,
                 dI_dt - beta * S * I / self.scaled_N + self.gamma * I,
-                # beta_smoothness
+                dbeta_dt
             ]
 
         self.ics = self.create_ics()
@@ -178,7 +182,7 @@ class WorkflowModel:
             self.timeinterval,
             sir_residual,
             self.ics + self.dcs,
-            num_domain=len(self.data_t),
+            num_domain=len(self.data_t)*2,
             num_boundary=2,
             num_test=len(self.data_t)//2,
             anchors=self.data_t
@@ -197,7 +201,7 @@ class WorkflowModel:
         net = net_model(
             topology,
             self.activation,
-            initialization
+            initialization,
         )
 
         if self.beta_hard_constraints:
@@ -211,13 +215,19 @@ class WorkflowModel:
         else:
             self.model = Model(data, net)
 
-        eq_w, ic_w, data_w = self.w_physics, self.w_physics, self.w_data
-        loss_weights = [eq_w] * self.n_equations + [ic_w] * len(self.ics) + [data_w] * len(self.dcs)
+        loss_weights = [self.w_physics] * self.n_equations
+        loss_weights += [self.w_beta_smoothness] 
+        loss_weights += [self.w_physics] * len(self.ics) 
+        loss_weights += [self.w_data] * len(self.dcs)
 
         if self.l2_regularization:
             loss_weights += [1]
 
-        self.model.compile("adam", self.learning_rate, loss_weights=loss_weights)
+        self.model.compile(
+            "adam", 
+            self.learning_rate, 
+            loss_weights=loss_weights, 
+        )
 
 
     def train(self, verbose=0):
