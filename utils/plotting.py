@@ -122,7 +122,7 @@ def plot_prevalence_data(data_t, I_data, figname=None):
 def plot_prevalence_results(I_data, data_t, I_pred, test_t, figname=None):
 
     plt.scatter(data_t, I_data, label="Dados I", color="red", s=scatter_size)
-    plt.plot(test_t, I_pred, label="I previsto", linestyle="--", linewidth=linewidth, color="blue")
+    plt.plot(test_t, I_pred, label="I estimado", linestyle="--", linewidth=linewidth, color="blue")
 
     plt.xlabel("Tempo (t)")
     plt.ylabel("Número de Indivíduos")
@@ -149,9 +149,9 @@ def plot_results(sir_comparts, sir_data, sir_pred, data_t, N=1, vlines=[], hline
     S_pred, I_pred = sir_pred[:, 0], sir_pred[:, 1]
     R_pred = N - S_pred - I_pred  
 
-    plt.plot(data_t, sir_pred[:,0], label="S previsto", linestyle="--", color="blue", linewidth=linewidth)
-    plt.plot(data_t, sir_pred[:,1], label="I previsto", linestyle="--", color="red", linewidth=linewidth)
-    plt.plot(data_t, R_pred, label="R previsto", linestyle="--", color="green", linewidth=linewidth)
+    plt.plot(data_t, sir_pred[:,0], label="S estimado", linestyle="--", color="blue", linewidth=linewidth)
+    plt.plot(data_t, sir_pred[:,1], label="I estimado", linestyle="--", color="red", linewidth=linewidth)
+    plt.plot(data_t, R_pred, label="R estimado", linestyle="--", color="green", linewidth=linewidth)
 
     _add_lines(vlines, hlines)
 
@@ -169,12 +169,13 @@ def plot_results(sir_comparts, sir_data, sir_pred, data_t, N=1, vlines=[], hline
 
 def plot_beta_comparison(real_beta, pred_beta, test_t, vlines=[], hlines=[], figname=None):
     plt.rcParams['text.usetex'] = False
-    
+    plt.ticklabel_format(axis='y', style='sci')
+
     plt.plot(test_t, real_beta, label=r"$\beta$ real", linewidth=linewidth)
-    plt.plot(test_t, pred_beta, label=r"$\beta$ previsto", linestyle="--", linewidth=linewidth)
+    plt.plot(test_t, pred_beta, label=r"$\beta$ estimado", linestyle="--", linewidth=linewidth)
     
     plt.xlabel("Tempo (t)")
-    plt.ylabel(r"$\beta$")
+    plt.ylabel(r"Taxa de Transmissão ($\beta$)")
     
     for value, label, color in vlines:
         plt.axvline(x=value, label=label, color=color)
@@ -193,11 +194,12 @@ def plot_beta_comparison(real_beta, pred_beta, test_t, vlines=[], hlines=[], fig
 
 def plot_beta_prediction(pred_beta, data_t, vlines=[], hlines=[], figname=None):
     plt.rcParams['text.usetex'] = False
+    plt.ticklabel_format(axis='y', style='sci')
     
-    plt.plot(data_t, pred_beta, label=r"$\beta$ previsto", linestyle="--", linewidth=linewidth)
+    plt.plot(data_t, pred_beta, label=r"Taxa de Transmissão ($\beta$) estimado", linestyle="--", linewidth=linewidth)
     
     plt.xlabel("Tempo (t)")
-    plt.ylabel(r"$\beta$")
+    plt.ylabel(r"Taxa de Transmissão ($\beta$)")
     
     _add_lines(vlines, hlines)
     
@@ -228,7 +230,7 @@ def plot_correlation(
 
     ax2 = ax1.twinx() 
 
-    ax2.set_ylabel(r"$\beta$", color='tab:orange')
+    ax2.set_ylabel(r"Taxa de Transmissão ($\beta$)", color='tab:orange')
     ax2.plot(correlation_t, pred_beta, color='tab:orange', linewidth=linewidth)
     ax2.tick_params(axis='y', labelcolor='tab:orange')
 
@@ -243,11 +245,12 @@ def plot_correlation(
 
 def plot_beta_example(pred_beta, data_t, figname=None):
     plt.rcParams['text.usetex'] = False
+    plt.ticklabel_format(axis='y', style='sci')
     
     plt.plot(data_t, pred_beta, linewidth=linewidth)
     
     plt.xlabel("Tempo (t)")
-    plt.ylabel(r"$\beta$")
+    plt.ylabel(r"Taxa de Transmissão ($\beta$)")
 
     plt.grid()
     

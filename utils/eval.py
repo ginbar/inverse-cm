@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from deepxde.metrics import mean_squared_error, l2_relative_error
+from deepxde.metrics import mean_squared_error, mean_absolute_percentage_error, l2_relative_error
 
 
 def eval_predictions(real, pred, compartiments=["S", "I", "beta"]):
@@ -10,6 +10,8 @@ def eval_predictions(real, pred, compartiments=["S", "I", "beta"]):
     return pd.DataFrame({
         "compartiment": compartiments, 
         "RMSE": [np.sqrt(mean_squared_error(real[:,i], pred[:,i])) for i in indexes],
+        "MAE": [np.mean(np.abs(real[:,i] - pred[:,i]))   for i in indexes],
+        "MAPE": [mean_absolute_percentage_error(real[:,i], pred[:,i]) for i in indexes],
         "L2": [l2_relative_error(real[:,i], pred[:,i]) for i in indexes],
         "L-infinity": [np.max(np.abs(real[:,i] - pred[:,i])) for i in indexes]
     })

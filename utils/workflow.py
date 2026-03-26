@@ -23,8 +23,11 @@ from deepxde import backend as bkd
 
 from tensorflow.keras.optimizers.schedules import InverseTimeDecay
 from .custom_models import AdaptativeDataWeightModel
-from .data import transform_column_with_mask, estimate_beta0, estimate_beta0_isaac3
-
+from .data import estimate_beta0_ode, estimate_beta0_linregress
+from .data import estimate_beta0_isaac3, estimate_beta0_poisson 
+from .data import estimate_beta0_linear_aprox 
+from .data import transform_column_with_mask
+from sklearn.preprocessing import MinMaxScaler
 
 
 class WorkflowModel:
@@ -44,6 +47,8 @@ class WorkflowModel:
         init_distribution="uniform",
         learning_rate=0.001,
         scaling="norm",
+        feature_range=(0, 1),
+        beta_estimation_method=None,
         w_physics=1,
         w_data=1,
         w_beta_smoothness=1e-3,
@@ -55,7 +60,6 @@ class WorkflowModel:
         parallel_pinns=False, 
         adaptative_wdata=False,
         early_stopping=False,
-        estimate_beta=False,
         fine_tunning_using_lbfgs=False,
         beta_hard_constraints=False,
         l2_regularization=False
@@ -79,6 +83,8 @@ class WorkflowModel:
         self.lbfgs_iterations = lbfgs_iterations
         self.display_every = display_every
         self.scaling = scaling
+        self.feature_range = feature_range
+        self.beta_estimation_method = beta_estimation_method
         self.w_physics = w_physics
         self.w_data = w_data
         self.w_beta_smoothness = w_beta_smoothness
@@ -87,7 +93,6 @@ class WorkflowModel:
         self.parallel_pinns = parallel_pinns
         self.adaptative_wdata = adaptative_wdata
         self.early_stopping = early_stopping
-        self.estimate_beta = estimate_beta
         self.fine_tunning_using_lbfgs = fine_tunning_using_lbfgs
         self.beta_hard_constraints = beta_hard_constraints
         self.l2_regularization = l2_regularization
@@ -103,16 +108,17 @@ class WorkflowModel:
                 def scale(data): return (data - I_mean) / I_std
                 def unscale(data): return data * I_std + I_mean
             case "min/max":
-                I_min = self.I_data.min(axis=0)
-                I_max = self.I_data.max(axis=0)
-                def scale(data): return (data - I_min) / (I_max - I_min)
-                def unscale(data): return I_min + (I_max - I_min) * data
+                a, b = self.feature_range
+                I_min, I_max = self.I_data.min(), self.I_data.max() 
+                def scale(data): return a + ((data - I_min) * (b - a)) / (I_max - I_min)
+                def unscale(data): return I_min + (((data - a) * (I_max - I_min)) / (b - a))
             case "norm":
                 def scale(data): return data / self.N
                 def unscale(data): return data * self.N
-            case _:
+            case None:
                 def scale(data): return data
                 def unscale(data): return data
+            case _ : raise Exception(f"{self.scaling} is not supported.")
 
         self.scale = scale
         self.unscale = unscale
@@ -136,18 +142,14 @@ class WorkflowModel:
             IC(self.timeinterval, I0_val, is_on_initial, component=1),
         ]
 
-        if self.estimate_beta:
-            self.beta0 = estimate_beta0(
+        if self.beta_estimation_method:
+            estimate_beta = self.get_beta_estimation()
+            self.beta0 = estimate_beta(
                 self.I_data, 
-                self.gamma, 
-                window=self.beta_estimation_window
+                self.gamma,
+                self.N, 
+                self.beta_estimation_window
             )
-            # self.beta0 = estimate_beta0_isaac3(
-            #     self.I_data,
-            #     self.N,
-            #     self.gamma, 
-            #     deltat=self.beta_estimation_window
-            # )
             def beta_val(_): return self.beta0
             ics.append(IC(self.timeinterval, beta_val, is_on_initial, component=2))
 
@@ -291,4 +293,14 @@ class WorkflowModel:
             case "tanh": return f"Glorot {self.init_distribution}"
             case "ReLU": return f"He {self.init_distribution}"
             case _ : raise Exception(f"{self.activation} is not supported.")
+
+    
+    def get_beta_estimation(self):
+        match self.beta_estimation_method:
+            case "isaac3": return estimate_beta0_isaac3 
+            case "ode": return estimate_beta0_ode
+            case "poison": return estimate_beta0_poisson
+            case "linregress": return estimate_beta0_linregress
+            case "linaprox": return estimate_beta0_linear_aprox
+            case _ : raise Exception(f"{self.beta_estimation_method} is not supported.")
 
