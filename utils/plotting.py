@@ -13,10 +13,10 @@ def _add_lines(vlines, hlines):
         plt.axhline(y=value, label=label, color=color)
 
 
-def plot_rk_curves(train_t, rk_data, figname=None):
+def plot_rk_curves(train_t, rk_data, xlabel="Tempo (t)", figname=None):
     plt.plot(train_t, rk_data)
     plt.legend(["S", "I", "R"], shadow=True)
-    plt.xlabel("Tempo (t)")
+    plt.xlabel(xlabel)
     plt.ylabel("Número de Indivíduos")
     plt.grid()
     if figname is not None:
@@ -24,11 +24,18 @@ def plot_rk_curves(train_t, rk_data, figname=None):
     plt.show()
 
 
-def plot_rk_data(train_t, rk_data, vlines=[], hlines=[], figname=None):
+def plot_rk_data(
+    train_t, 
+    rk_data, 
+    vlines=[], 
+    hlines=[], 
+    xlabel="Tempo (t)", 
+    figname=None
+):
     plt.scatter(train_t, rk_data[:, 0], s=scatter_size, label="S", color="blue")
     plt.scatter(train_t, rk_data[:, 1], s=scatter_size, label="Dados I", color="red")
     plt.scatter(train_t, rk_data[:, 2], s=scatter_size, label="R", color="green")
-    plt.xlabel("Tempo (t)")
+    plt.xlabel(xlabel)
     plt.ylabel("Número de Indivíduos")
     plt.grid()
     _add_lines(vlines, hlines)
@@ -103,7 +110,7 @@ def plot_data_losshistory(losshistory, figname=None):
     plt.show()
 
 
-def plot_prevalence_data(data_t, I_data, figname=None):
+def plot_prevalence_data(data_t, I_data, xlabel="Tempo (t)", figname=None):
 
     plt.scatter(data_t, I_data, label="Dados I", color="red", s=scatter_size)
 
@@ -119,12 +126,18 @@ def plot_prevalence_data(data_t, I_data, figname=None):
     plt.show()
 
 
-def plot_prevalence_results(I_data, data_t, I_pred, test_t, figname=None):
-
+def plot_prevalence_results(
+    I_data, 
+    data_t, 
+    I_pred, 
+    test_t, 
+    xlabel="Tempo (t)", 
+    figname=None
+):
     plt.scatter(data_t, I_data, label="Dados I", color="red", s=scatter_size)
     plt.plot(test_t, I_pred, label="I estimado", linestyle="--", linewidth=linewidth, color="blue")
 
-    plt.xlabel("Tempo (t)")
+    plt.xlabel(xlabel)
     plt.ylabel("Número de Indivíduos")
 
     plt.legend()
@@ -136,7 +149,16 @@ def plot_prevalence_results(I_data, data_t, I_pred, test_t, figname=None):
     plt.show()
 
 
-def plot_results(sir_comparts, sir_data, sir_pred, data_t, N=1, vlines=[], hlines=[], figname=None):
+def plot_results(
+    sir_comparts, 
+    sir_data, 
+    sir_pred, 
+    data_t, 
+    N=1, 
+    vlines=[], 
+    hlines=[], 
+    xlabel="Tempo (t)",
+    figname=None):
 
     plt.plot(data_t, sir_comparts[:,0], label="S RK", color="blue", linewidth=linewidth)
     plt.plot(data_t, sir_comparts[:,1], label="I RK", color="red", linewidth=linewidth)
@@ -155,7 +177,7 @@ def plot_results(sir_comparts, sir_data, sir_pred, data_t, N=1, vlines=[], hline
 
     _add_lines(vlines, hlines)
 
-    plt.xlabel("Tempo (t)")
+    plt.xlabel(xlabel)
     plt.ylabel("Número de Indivíduos")
 
     plt.legend()
@@ -167,14 +189,22 @@ def plot_results(sir_comparts, sir_data, sir_pred, data_t, N=1, vlines=[], hline
     plt.show()
 
 
-def plot_beta_comparison(real_beta, pred_beta, test_t, vlines=[], hlines=[], figname=None):
+def plot_beta_comparison(
+    real_beta, 
+    pred_beta, 
+    test_t, 
+    vlines=[], 
+    hlines=[], 
+    xlabel="Tempo (t)", 
+    figname=None
+):
     plt.rcParams['text.usetex'] = False
     plt.ticklabel_format(axis='y', style='sci')
 
     plt.plot(test_t, real_beta, label=r"$\beta$ real", linewidth=linewidth)
     plt.plot(test_t, pred_beta, label=r"$\beta$ estimado", linestyle="--", linewidth=linewidth)
     
-    plt.xlabel("Tempo (t)")
+    plt.xlabel(xlabel)
     plt.ylabel(r"Taxa de Transmissão ($\beta$)")
     
     for value, label, color in vlines:
@@ -191,14 +221,21 @@ def plot_beta_comparison(real_beta, pred_beta, test_t, vlines=[], hlines=[], fig
     
     plt.show()
 
-
-def plot_beta_prediction(pred_beta, data_t, vlines=[], hlines=[], figname=None):
+ 
+def plot_beta_prediction(
+    pred_beta, 
+    data_t, 
+    vlines=[], 
+    hlines=[], 
+    xlabel="Tempo (t)", 
+    figname=None
+):
     plt.rcParams['text.usetex'] = False
     plt.ticklabel_format(axis='y', style='sci')
     
     plt.plot(data_t, pred_beta, label=r"Taxa de Transmissão ($\beta$) estimado", linestyle="--", linewidth=linewidth)
     
-    plt.xlabel("Tempo (t)")
+    plt.xlabel(xlabel)
     plt.ylabel(r"Taxa de Transmissão ($\beta$)")
     
     _add_lines(vlines, hlines)
@@ -216,14 +253,15 @@ def plot_correlation(
     pred_beta, 
     variable, 
     correlation_t,
-    variable_label, 
+    variable_label,
+    xlabel="Tempo (t)", 
     figname=None
 ):
     plt.rcParams['text.usetex'] = False
     
     fig, ax1 = plt.subplots()
 
-    ax1.set_xlabel('Tempo (t)')
+    ax1.set_xlabel(xlabel)
     ax1.set_ylabel(variable_label, color='tab:blue')
     ax1.bar(correlation_t, variable, color='tab:blue')
     ax1.tick_params(axis='y', labelcolor='tab:blue')
@@ -243,13 +281,13 @@ def plot_correlation(
     plt.show()
 
 
-def plot_beta_example(pred_beta, data_t, figname=None):
+def plot_beta_example(pred_beta, data_t, xlabel="Tempo (t)", figname=None):
     plt.rcParams['text.usetex'] = False
     plt.ticklabel_format(axis='y', style='sci')
     
     plt.plot(data_t, pred_beta, linewidth=linewidth)
     
-    plt.xlabel("Tempo (t)")
+    plt.xlabel(xlabel)
     plt.ylabel(r"Taxa de Transmissão ($\beta$)")
 
     plt.grid()

@@ -7,6 +7,7 @@ import deepxde as dde
 import numpy as np
 import tensorflow as tf
 import time
+from scipy.special import lambertw
 
 dde.config.set_default_float("float64")
 dde.config.set_random_seed(42)
@@ -15,7 +16,7 @@ np.random.seed(42)
 from deepxde.data import PDE
 from deepxde.geometry import TimeDomain
 from deepxde.icbc.initial_conditions import IC
-from deepxde.icbc import PointSetBC
+from deepxde.icbc import PointSetBC, DirichletBC
 from deepxde.nn import FNN, PFNN
 from deepxde.model import Model
 from deepxde.callbacks import VariableValue, EarlyStopping
@@ -52,6 +53,7 @@ class WorkflowModel:
         w_physics=1,
         w_data=1,
         w_beta_smoothness=1e-3,
+        w_max_I_beta=0,
         adam_iterations=300000,
         lbfgs_iterations=50000,
         display_every=100,
@@ -62,6 +64,7 @@ class WorkflowModel:
         early_stopping=False,
         fine_tunning_using_lbfgs=False,
         beta_hard_constraints=False,
+        max_I_beta_constraint=False,
         l2_regularization=False
     ):
         self.t_0 = t_0
@@ -88,6 +91,7 @@ class WorkflowModel:
         self.w_physics = w_physics
         self.w_data = w_data
         self.w_beta_smoothness = w_beta_smoothness
+        self.w_max_I_beta = w_max_I_beta
         self.es_min_delta = es_min_delta
         self.es_patience = es_patience
         self.parallel_pinns = parallel_pinns
@@ -96,6 +100,7 @@ class WorkflowModel:
         self.fine_tunning_using_lbfgs = fine_tunning_using_lbfgs
         self.beta_hard_constraints = beta_hard_constraints
         self.l2_regularization = l2_regularization
+        self.max_I_beta_constraint = max_I_beta_constraint
         self.scale_data()
         self.config_model()
 
@@ -124,18 +129,22 @@ class WorkflowModel:
         self.unscale = unscale
 
         self.scaled_I_data = scale(self.I_data)
+        self.max_I_index = self.I_data.argmax()
 
 
     def create_ics(self):
-        self.I0 = self.scaled_I_data[0]
+        self.I0 = self.I_data[0]
+        self.S0 = self.N - self.I0
+
+        self.scaled_I0 = self.scale(self.I0)
         self.scaled_N = self.scale(self.N)
-        self.S0 = self.scaled_N - self.I0
+        self.scaled_S0 = self.scaled_N - self.scaled_I0
         self.beta0 = None
 
         # Tensorflow has an issue with lambdas...
         def is_on_initial(_, on_initial): return on_initial
-        def S0_val(_): return self.S0
-        def I0_val(_): return self.I0
+        def S0_val(_): return self.scaled_S0
+        def I0_val(_): return self.scaled_I0
 
         ics = [
             IC(self.timeinterval, S0_val, is_on_initial, component=0),
@@ -151,7 +160,7 @@ class WorkflowModel:
                 self.beta_estimation_window
             )
             def beta_val(_): return self.beta0
-            ics.append(IC(self.timeinterval, beta_val, is_on_initial, component=2))
+            ics.append(IC(self.timeinterval, beta_val, is_on_initial, component=self.n_compartments))
 
         return ics
 
@@ -159,6 +168,23 @@ class WorkflowModel:
     def create_data_bcs(self):
         data_I = PointSetBC(self.data_t, self.scaled_I_data.reshape(-1, 1), component=1)
         return [data_I]
+
+
+    # def create_I_max_beta_bc(self):
+        
+    #     self.max_I_index = self.I_data.argmax()
+    #     max_I = self.I_data[self.max_I_index]
+
+    #     beta = self.gamma / (np.e * self.S0)
+    #     if max_I - self.I0 - self.S0 != 0:
+    #         #W = lambertw((max_I - self.I0 - self.S0) / (np.e * self.S0))
+    #         beta = self.gamma / (max_I - self.I0 - self.S0)
+
+    #     self.max_I_beta = self.gamma / (np.e * self.S0)
+    #     return PointSetBC(
+    #         np.array([self.max_I_index]), 
+    #         np.array([[self.max_I_beta]]), 
+    #         component=self.n_compartments)
 
 
     def config_model(self):
@@ -174,11 +200,15 @@ class WorkflowModel:
             return [
                 dS_dt + beta * S * I / self.scaled_N,
                 dI_dt - beta * S * I / self.scaled_N + self.gamma * I,
-                dbeta_dt
+                dbeta_dt,
+                # beta[self.max_I_index] * S[self.max_I_index] - self.gamma
             ]
 
         self.ics = self.create_ics()
         self.dcs = self.create_data_bcs()
+
+        # if self.max_I_beta_constraint:
+        #     self.dcs.append(self.create_I_max_beta_bc()) 
 
         data = PDE(
             self.timeinterval,
@@ -219,8 +249,11 @@ class WorkflowModel:
 
         loss_weights = [self.w_physics] * self.n_equations
         loss_weights += [self.w_beta_smoothness] 
+        # loss_weights += [self.w_max_I_beta]
         loss_weights += [self.w_physics] * len(self.ics) 
-        loss_weights += [self.w_data] * len(self.dcs)
+        loss_weights += [self.w_data]
+
+        print(loss_weights)
 
         if self.l2_regularization:
             loss_weights += [1]
