@@ -50,6 +50,9 @@ class WorkflowModel:
         scaling="norm",
         feature_range=(0, 1),
         beta_estimation_method=None,
+        num_domain=None,
+        num_test=None,
+        data_cp_relation=2,
         w_physics=1,
         w_data=1,
         w_beta_smoothness=1e-3,
@@ -88,6 +91,9 @@ class WorkflowModel:
         self.scaling = scaling
         self.feature_range = feature_range
         self.beta_estimation_method = beta_estimation_method
+        self.data_cp_relation = data_cp_relation
+        self.num_domain = len(data_t) * data_cp_relation if num_domain is None else num_domain
+        self.num_test = len(data_t) * data_cp_relation if num_test is None else num_test
         self.w_physics = w_physics
         self.w_data = w_data
         self.w_beta_smoothness = w_beta_smoothness
@@ -170,23 +176,6 @@ class WorkflowModel:
         return [data_I]
 
 
-    # def create_I_max_beta_bc(self):
-        
-    #     self.max_I_index = self.I_data.argmax()
-    #     max_I = self.I_data[self.max_I_index]
-
-    #     beta = self.gamma / (np.e * self.S0)
-    #     if max_I - self.I0 - self.S0 != 0:
-    #         #W = lambertw((max_I - self.I0 - self.S0) / (np.e * self.S0))
-    #         beta = self.gamma / (max_I - self.I0 - self.S0)
-
-    #     self.max_I_beta = self.gamma / (np.e * self.S0)
-    #     return PointSetBC(
-    #         np.array([self.max_I_index]), 
-    #         np.array([[self.max_I_beta]]), 
-    #         component=self.n_compartments)
-
-
     def config_model(self):
         self.timeinterval = TimeDomain(self.t_0, self.t_f)
         
@@ -197,26 +186,33 @@ class WorkflowModel:
             dI_dt = dde.gradients.jacobian(y, t, i=1)
             dbeta_dt = dde.gradients.jacobian(y, t, i=2)
 
+            max_I_cp_index = self.max_I_index * self.data_cp_relation 
+            max_beta = (beta[max_I_cp_index] * S[max_I_cp_index] - self.gamma)[0]
+
+            max_I_beta_res = tf.one_hot(
+                max_I_cp_index, 
+                beta.shape[0], 
+                on_value=max_beta,
+                dtype="float64"
+            ) 
+
             return [
                 dS_dt + beta * S * I / self.scaled_N,
                 dI_dt - beta * S * I / self.scaled_N + self.gamma * I,
                 dbeta_dt,
-                # beta[self.max_I_index] * S[self.max_I_index] - self.gamma
+                max_I_beta_res
             ]
 
         self.ics = self.create_ics()
         self.dcs = self.create_data_bcs()
 
-        # if self.max_I_beta_constraint:
-        #     self.dcs.append(self.create_I_max_beta_bc()) 
-
         data = PDE(
             self.timeinterval,
             sir_residual,
             self.ics + self.dcs,
-            num_domain=len(self.data_t)*2,
+            num_domain=self.num_domain,
             num_boundary=2,
-            num_test=len(self.data_t)//2,
+            num_test=self.num_test,
             anchors=self.data_t
         )
 
@@ -249,7 +245,7 @@ class WorkflowModel:
 
         loss_weights = [self.w_physics] * self.n_equations
         loss_weights += [self.w_beta_smoothness] 
-        # loss_weights += [self.w_max_I_beta]
+        loss_weights += [self.w_max_I_beta]
         loss_weights += [self.w_physics] * len(self.ics) 
         loss_weights += [self.w_data]
 
