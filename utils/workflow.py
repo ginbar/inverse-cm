@@ -186,15 +186,13 @@ class WorkflowModel:
             dI_dt = dde.gradients.jacobian(y, t, i=1)
             dbeta_dt = dde.gradients.jacobian(y, t, i=2)
 
-            max_I_cp_index = self.max_I_index * self.data_cp_relation 
+            max_I_cp_index = self.max_I_index * self.data_cp_relation
             max_beta = (beta[max_I_cp_index] * S[max_I_cp_index] - self.gamma)[0]
 
-            max_I_beta_res = tf.one_hot(
-                max_I_cp_index, 
-                beta.shape[0], 
-                on_value=max_beta,
-                dtype="float64"
-            ) 
+            # tf.print("Max I beta:", max_beta)
+
+            max_I_beta_res = beta * tf.one_hot(max_I_cp_index, beta.shape[0], dtype="float64") 
+            max_I_beta_res -= tf.one_hot(max_I_cp_index, beta.shape[0], on_value=max_beta, dtype="float64")
 
             return [
                 dS_dt + beta * S * I / self.scaled_N,
@@ -314,6 +312,7 @@ class WorkflowModel:
 
     @property
     def n_physics(self):
+        n_extra_components = 2 # beta smothing and I_max beta constraint
         return self.n_equations + len(self.ics)
 
 
