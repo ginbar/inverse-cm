@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 import pandas as pd
 from scipy.integrate import solve_ivp, odeint
-from scipy.optimize import minimize
+from scipy.optimize import minimize, least_squares
 from scipy.stats import linregress, poisson
 from scipy.signal import savgol_filter
 
@@ -199,3 +199,64 @@ def apply_savgol_filter(x, y, window=201, polyorder=3, index=None):
         return smooth_y
 
     return pd.Series(smooth_y, index=index)
+
+
+def calculate_prevalence(beta, gamma, N, t_0, t_f, ics, t_sol):
+    
+    def sir_system(t, comparts, beta, gamma):
+        S, I, R = comparts
+        return [
+            -beta * S * I / N,
+            beta * S * I / N - gamma * I,
+            gamma * I
+        ]
+
+    sir_sol = solve_ivp(
+        sir_system,
+        [t_0, t_f],
+        ics,
+        args=[beta, gamma],
+        dense_output=True
+    )
+
+    return sir_sol.sol(t_sol).T[:,1]
+
+
+
+def get_optimal_beta_from_data(data_t, I_data, N, gamma, guess, bounds):
+    
+    def sir_system(t, comparts, beta):
+        S, I, R = comparts
+        return [
+            -beta * S * I / N,
+            beta * S * I / N - gamma * I,
+            gamma * I
+        ]
+
+    def residual(beta, t, y0, I_data):
+        t_0, t_f = 0, len(I_data) - 1
+        sir_sol = solve_ivp(
+            sir_system,
+            [t_0, t_f],
+            [S0, I0, R0],
+            args=beta,
+            dense_output=True
+        )
+        I_hat = sir_sol.sol(t).T[:,1]
+        return I_hat - I_data
+
+    I0 = I_data[0]
+    S0 = N - I0
+    R0 = 0
+
+    result = least_squares(
+        residual, 
+        guess, 
+        args=(data_t, [S0, I0, R0], I_data),
+        bounds=bounds,  
+        method='trf',  
+        loss='linear', 
+        max_nfev=1000
+    )
+
+    return result.x

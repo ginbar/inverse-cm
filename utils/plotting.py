@@ -114,7 +114,7 @@ def plot_prevalence_data(data_t, I_data, xlabel="Tempo (t)", figname=None):
 
     plt.scatter(data_t, I_data, label="Dados I", color="red", s=scatter_size)
 
-    plt.xlabel("Tempo (t)")
+    plt.xlabel(xlabel)
     plt.ylabel("Número de Indivíduos")
 
     plt.legend()
@@ -233,7 +233,7 @@ def plot_beta_prediction(
     plt.rcParams['text.usetex'] = False
     plt.ticklabel_format(axis='y', style='sci')
     
-    plt.plot(data_t, pred_beta, label=r"Taxa de Transmissão ($\beta$) estimado", linestyle="--", linewidth=linewidth)
+    plt.plot(data_t, pred_beta, label=r"$\beta$ estimado", linestyle="--", linewidth=linewidth)
     
     plt.xlabel(xlabel)
     plt.ylabel(r"Taxa de Transmissão ($\beta$)")
@@ -292,6 +292,31 @@ def plot_beta_example(pred_beta, data_t, xlabel="Tempo (t)", figname=None):
 
     plt.grid()
     
+    if figname is not None:
+        plt.savefig(f"../../images/{figname}.png")
+    
+    plt.show()
+
+
+def plot_climate_variable(
+    variable, 
+    variable_label,
+    xlabel="Tempo (t)", 
+    figname=None
+):
+    plt.rcParams['text.usetex'] = False
+    
+    sample_size = len(variable)
+    t = np.linspace(0, sample_size - 1, sample_size)
+
+    plt.bar(t, variable, color='tab:blue')
+
+    plt.xlabel(xlabel)
+    plt.ylabel(variable_label)
+    
+    plt.grid()
+    plt.tight_layout()  
+
     if figname is not None:
         plt.savefig(f"../../images/{figname}.png")
     
