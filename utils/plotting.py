@@ -13,12 +13,22 @@ def _add_lines(vlines, hlines):
         plt.axhline(y=value, label=label, color=color)
 
 
-def plot_rk_curves(train_t, rk_data, xlabel="Tempo (t)", figname=None):
-    plt.plot(train_t, rk_data)
-    plt.legend(["S", "I", "R"], shadow=True)
+def plot_rk_curves(
+    train_t, 
+    rk_data, 
+    xlabel="Tempo (t)", 
+    vlines=[], 
+    hlines=[],
+    figname=None
+):
+    plt.plot(train_t, rk_data[:,0], label="S")
+    plt.plot(train_t, rk_data[:,1], label="I")
+    plt.plot(train_t, rk_data[:,2], label="R")
     plt.xlabel(xlabel)
     plt.ylabel("Número de Indivíduos")
     plt.grid()
+    _add_lines(vlines, hlines)
+    plt.legend(shadow=True)
     if figname is not None:
         plt.savefig(f"../../images/{figname}.png")
     plt.show()
