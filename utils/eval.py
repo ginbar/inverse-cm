@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from deepxde.metrics import mean_squared_error, mean_absolute_percentage_error, l2_relative_error
+from deepxde.metrics import mean_squared_error, mean_absolute_percentage_error
 
 
 def eval_predictions(real, pred, compartiments=["S", "I", "beta"]):
