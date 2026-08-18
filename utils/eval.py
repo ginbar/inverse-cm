@@ -12,7 +12,7 @@ def eval_predictions(real, pred, compartiments=["S", "I", "beta"]):
         "RMSE": [np.sqrt(mean_squared_error(real[:,i], pred[:,i])) for i in indexes],
         "MAE": [np.mean(np.abs(real[:,i] - pred[:,i]))   for i in indexes],
         "MAPE": [mean_absolute_percentage_error(real[:,i], pred[:,i]) for i in indexes],
-        "L2": [l2_relative_error(real[:,i], pred[:,i]) for i in indexes],
+        "L2": [np.sqrt(np.sum((real[:,i] - pred[:,i])**2)) for i in indexes],
         "L-infinity": [np.max(np.abs(real[:,i] - pred[:,i])) for i in indexes]
     })
 
